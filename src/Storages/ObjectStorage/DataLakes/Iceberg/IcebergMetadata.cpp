@@ -219,8 +219,10 @@ IcebergMetadata::~IcebergMetadata()
         background_metadata_prefetcher_thread->join();
 }
 
+/// TODO: in the end, schedule in a pool (every Metadata schedules in a pool, instead of running its own)
 void IcebergMetadata::backgroundMetadataPrefetcherThread()
 {
+    /// TODO: call setThreadName
     try
     {
         while (!shutdown_called.load())
