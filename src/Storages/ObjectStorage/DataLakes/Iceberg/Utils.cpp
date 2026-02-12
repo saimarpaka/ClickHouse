@@ -1003,7 +1003,8 @@ static MetadataFileWithInfo getLatestMetadataFileAndVersion(
         : MostRecentMetadataFileSelectionWay::BY_METADATA_FILE_VERSION;
     bool need_all_metadata_files_parsing = (selection_way == MostRecentMetadataFileSelectionWay::BY_LAST_UPDATED_MS_FIELD)
         || (table_uuid.has_value() && use_table_uuid_for_metadata_file_selection);
-    const auto metadata_files = listFiles(*object_storage, table_path, "metadata", ".metadata.json", metadata_cache->getFileListCache());
+    const auto metadata_files = listFiles(*object_storage, table_path, "metadata", ".metadata.json",
+            metadata_cache ? metadata_cache->getFileListCache() : std::nullopt);
     if (metadata_files.empty())
     {
         throw Exception(ErrorCodes::FILE_DOESNT_EXIST, "The metadata file for Iceberg table with path {} doesn't exist", table_path);
@@ -1124,7 +1125,9 @@ void preheatCachesWithLatestVersions(
     //     : MostRecentMetadataFileSelectionWay::BY_METADATA_FILE_VERSION;
     // bool need_all_metadata_files_parsing = (selection_way == MostRecentMetadataFileSelectionWay::BY_LAST_UPDATED_MS_FIELD)
         // || (table_uuid.has_value() && false);
-    const auto metadata_files = listFiles(*object_storage, table_path, "metadata", ".metadata.json", metadata_cache->getFileListCache(), true);
+    const auto metadata_files = listFiles(*object_storage, table_path, "metadata", ".metadata.json",
+            metadata_cache ? metadata_cache->getFileListCache() : std::nullopt,
+            true);
     if (metadata_files.empty())
     {
         throw Exception(ErrorCodes::FILE_DOESNT_EXIST, "The metadata file for Iceberg table with path {} doesn't exist", table_path);

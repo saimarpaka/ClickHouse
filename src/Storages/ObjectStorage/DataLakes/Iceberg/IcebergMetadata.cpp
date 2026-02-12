@@ -207,6 +207,7 @@ IcebergMetadata::IcebergMetadata(
     , data_lake_settings(configuration_->getDataLakeSettings())
     , write_format(configuration_->format)
 {
+    /// TODO: no need to start when cache is disabled
     if (!background_metadata_prefetcher_thread)
         background_metadata_prefetcher_thread = std::make_unique<ThreadFromGlobalPool>([this]() { backgroundMetadataPrefetcherThread(); });
 }
