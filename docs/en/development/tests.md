@@ -63,10 +63,10 @@ git clone --single-branch https://github.com/ClickHouse/ClickHouse
 cd ClickHouse
 ```
 
-3. Build code and run a subset of tests (named "Fast test").
+3. Build code and run "fast tests".
 
 ```sh
-python3 -m ci.praktika run "Fast test"
+python3 -m ci.praktika run fast
 ```
 
 You should get
@@ -103,13 +103,13 @@ cd ClickHouse
 
 3. Build the code.
 ```sh
-python3 -m ci.praktika run "Build (amd_debug)"
+python3 -m ci.praktika run build_debug
 cp ci/tmp/build/programs/clickhouse ci/tmp
 ```
 
 4. Run stateless tests which can be run in parallel.
 ```sh
-python3 -m ci.praktika run "Stateless tests (amd_debug, parallel)"
+python3 -m ci.praktika run functional
 ```
 
 You should get

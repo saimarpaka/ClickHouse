@@ -160,16 +160,6 @@ def main():
                 f"NOTE: It's a local run and clickhouse binary is not found [{clickhouse_bin_path}] - will be built"
             )
             time.sleep(5)
-        resolved_clickhouse_bin_path = clickhouse_bin_path.resolve()
-        Shell.check(
-            f"ln -sf {resolved_clickhouse_bin_path} {resolved_clickhouse_bin_path.parent}/clickhouse-server",
-            strict=True,
-        )
-        Shell.check(
-            f"ln -sf {resolved_clickhouse_bin_path} {resolved_clickhouse_bin_path.parent}/clickhouse-client",
-            strict=True,
-        )
-        Shell.check(f"chmod +x {resolved_clickhouse_bin_path}", strict=True)
     else:
         os.environ["CH_HOSTNAME"] = (
             "https://build-cache.eu-west-1.aws.clickhouse-staging.com"
@@ -244,6 +234,18 @@ def main():
             )
         )
         res = results[-1].is_ok()
+
+    if Info().is_local_run:
+        resolved_clickhouse_bin_path = clickhouse_bin_path.resolve()
+        Shell.check(
+            f"ln -sf {resolved_clickhouse_bin_path} {resolved_clickhouse_bin_path.parent}/clickhouse-server",
+            strict=True,
+        )
+        Shell.check(
+            f"ln -sf {resolved_clickhouse_bin_path} {resolved_clickhouse_bin_path.parent}/clickhouse-client",
+            strict=True,
+        )
+        Shell.check(f"chmod +x {resolved_clickhouse_bin_path}", strict=True)
 
     if res and JobStages.CONFIG in stages:
         commands = [
