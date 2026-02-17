@@ -58,6 +58,13 @@ Install Docker on Ubuntu if needed and re-login:
 sudo apt-get update
 sudo apt-get install docker.io
 sudo usermod -aG docker ubuntu
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "ipv6": true,
+  "ip6tables": true
+}
+EOF
+sudo systemctl restart docker
 ```
 
 #### Run a CI Job Locally
