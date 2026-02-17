@@ -45,79 +45,54 @@ See `tests/clickhouse-test --help` for all options of `clickhouse-test`.
 You can run all tests or run subset of tests by providing a filter for test names: `./clickhouse-test substring`.
 There are also options to run tests in parallel or in random order.
 
-### Running fast tests {#running-fast-tests}
-
-You may need a decently powerful machine to run a subset of tests (called "Fast test"). The following works on `t3.2xlarge` AWS amd64 Ubuntu instance with 100 GB storage.
-
-1. Install prerequisites and re-login.
-```sh
-sudo apt-get update
-sudo apt-get install docker.io
-sudo usermod -aG docker ubuntu
-```
-
-2. Get the source code.
-
-```sh
-git clone --single-branch https://github.com/ClickHouse/ClickHouse
-cd ClickHouse
-```
-
-3. Build code and run "fast tests".
-
-```sh
-python -m ci.praktika run fast
-```
-
-You should get
-```sh
-Failed: 0, Passed: 7394, Skipped: 1795
-```
-
-If you leave the run unattended, you may use `nohup` or `disown` to keep it running after the `ssh` connection is lost.
-
 ### Running stateless tests {#running-stateless-tests}
 
-You may need a decently powerful machine to run stateless tests. The following works on `m7i.8xlarge` AWS amd64 Ubuntu instance with 200 GB storage.
+A locally installed ClickHouse with default settings may work for specific test cases, but cannot run all test queries correctly. In CI, each job installs a specific ClickHouse configuration (e.g., S3 storage, Parallel Replicas) which can be cumbersome to reproduce manually. To avoid this, you can reproduce any CI job locally using the same orchestration as CI — no manual configuration needed.
 
-1. Install prerequisites and re-login.
+#### Prerequisites
+- Python 3 (standard library only)
+- Docker
+
+Install Docker on Ubuntu if needed and re-login:
 ```sh
 sudo apt-get update
 sudo apt-get install docker.io
 sudo usermod -aG docker ubuntu
-sudo tee /etc/docker/daemon.json <<'EOF'
-{
-  "ipv6": true,
-  "ip6tables": true
-}
-EOF
-sudo systemctl restart docker
 ```
 
-2. Get the source code.
-
-```sh
-git clone --single-branch https://github.com/ClickHouse/ClickHouse
-cd ClickHouse
+#### Run a CI Job Locally
+Pick any job name from a CI report and run it locally:
+```bash
+python -m ci.praktika run "<JOB_NAME>"
 ```
+- Always quote the job name exactly as it appears in the CI report (it may contain spaces and commas), e.g.: `"Stateless tests (amd_debug, parallel)"`. This sets up the same ClickHouse configuration and runs the same tests as in CI.
+- The architecture and build type in the job name (e.g., `amd_debug`) are CI-specific labels. When running locally, they have no effect — the job will use whatever binary you provide, on whatever architecture you are running. The job name only determines the ClickHouse configuration and the test set (unless overridden with `--test`).
+- In CI, functional tests are split into batches for better resource utilization. For example, `"Stateless tests (amd_debug, parallel)"` and `"Stateless tests (amd_debug, sequential)"` together cover the entire scope: parallel-safe tests run concurrently, and the rest run sequentially. The split reduces total CI time by maximizing parallelism where possible. To reproduce the full test scope locally, run both batches.
+- There is also a `"Fast test"` CI job that runs a limited scope of functional tests to verify basic ClickHouse functionality — it uses a build without all optional modules and is the quickest way to catch regressions. You can run it locally the same way. Place your ClickHouse binary in one of the default search paths (`./ci/tmp/clickhouse`, `./build/programs/clickhouse`, or `./clickhouse`) — otherwise the job will attempt to build ClickHouse first:
+  ```bash
+  python -m ci.praktika run "Fast test"
+  ```
 
-3. Build the code.
-```sh
-python -m ci.praktika run build_debug
-cp ci/tmp/build/programs/clickhouse ci/tmp
+#### Run Specific Tests Within a CI Job
+With `--test`, the job prepares an identical ClickHouse setup as used in CI but runs only the selected tests:
+```bash
+python -m ci.praktika run "Stateless tests (amd_debug, parallel)" \
+  --test 00001_select1
 ```
+- You can pass multiple test names:
+  ```bash
+  python -m ci.praktika run "Stateless tests (amd_debug, parallel)" \
+    --test 00001_select1 00002_log_and_exception_messages_formatting
+  ```
+- Tip: If any ClickHouse configuration is acceptable and you just need to run specific tests, use the alias `functional` instead of the full job name:
+  ```bash
+  python -m ci.praktika run functional --test 00001_select1
+  ```
 
-4. Run stateless tests which can be run in parallel.
-```sh
-python -m ci.praktika run functional
-```
-
-You should get
-```sh
-Failed: 0, Passed: 8497, Skipped: 103
-```
-
-Note. `python -m ci.praktika run` invocations run a specific continuous integration job, you can can read more about ClickHouse CI [here](continuous-integration.md).
+#### Additional Customization Options
+- `--path PATH` — custom path to the ClickHouse binary. By default, the runner searches in order: `./ci/tmp/clickhouse`, `./build/programs/clickhouse`, `./clickhouse`.
+- `--count N` — repeat each test N times.
+- `--workers N` — override the automatic calculation of parallel workers derived from machine capacity.
 
 ### Adding a new test {#adding-a-new-test}
 
