@@ -171,7 +171,7 @@ def main():
                 Result.from_commands_run(
                     name="Build Ninja",
                     command=[
-                        f"cmake -B {NINJA_BUILD_DIR} -S {NINJA_SOURCE_DIR} -DCMAKE_BUILD_TYPE=Release",
+                        f"cmake -B {NINJA_BUILD_DIR} -S {NINJA_SOURCE_DIR} -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF",
                         f"cmake --build {NINJA_BUILD_DIR}",
                     ],
                 )
@@ -196,6 +196,9 @@ def main():
             f" -DLLVM_TARGETS_TO_BUILD=Native"
             f" -DCMAKE_BUILD_TYPE=Release"
             f" -DLLVM_BUILD_INSTRUMENTED=IR"
+            f" -DCMAKE_C_COMPILER=clang-21"
+            f" -DCMAKE_CXX_COMPILER=clang++-21"
+            f" -DLLVM_ENABLE_LLD=ON"
             f" -DLLVM_ENABLE_TERMINFO=OFF"
             f" -DLLVM_ENABLE_ZLIB=OFF"
             f" -DLLVM_ENABLE_ZSTD=OFF"
@@ -227,7 +230,6 @@ def main():
                     command=(
                         f"{CUSTOM_NINJA} -C {STAGE1_BUILD_DIR}"
                         f" install-clang install-clang-resource-headers install-lld"
-                        f" install-compiler-rt-headers"
                     ),
                 )
             )
@@ -353,8 +355,45 @@ def main():
         os.makedirs(STAGE2_BUILD_DIR, exist_ok=True)
 
         builtin_targets = ";".join(t for t, _ in CROSS_BUILTIN_TARGETS)
+
+        # Create a minimal stub sysroot for cross-target builtins compilation.
+        # Uses --sysroot to isolate from host headers, -ffreestanding for
+        # compiler-provided headers (stdint.h, stddef.h, etc.), and
+        # COMPILER_RT_BAREMETAL_BUILD=ON to exclude files needing full libc.
+        # Remaining files need only a few OS headers which we stub out here.
+        cross_sysroot = f"{TEMP}/cross-builtins-sysroot"
+        cross_inc = f"{cross_sysroot}/include"
+        for subdir in ["", "sys", "linux", "asm"]:
+            os.makedirs(f"{cross_inc}/{subdir}", exist_ok=True)
+
+        with open(f"{cross_inc}/assert.h", "w") as f:
+            f.write(
+                "#define assert(x) ((void)0)\n"
+                "#define static_assert _Static_assert\n"
+            )
+        with open(f"{cross_inc}/sys/auxv.h", "w") as f:
+            # Stubs for cpu_model/aarch64.c (FreeBSD: elf_aux_info, Linux: getauxval)
+            f.write(
+                "#pragma once\n"
+                "#define AT_HWCAP 16\n"
+                "#define AT_HWCAP2 26\n"
+                "int elf_aux_info(int, void *, int);\n"
+                "unsigned long getauxval(unsigned long);\n"
+            )
+        with open(f"{cross_inc}/linux/unistd.h", "w") as f:
+            f.write("#include <asm/unistd.h>\n")
+        with open(f"{cross_inc}/asm/unistd.h", "w") as f:
+            # Stub for clear_cache.c on riscv64
+            f.write("#define __NR_riscv_flush_icache 259\n")
+
+        cross_flags = (
+            f"-ffreestanding --sysroot={cross_sysroot} -isystem {cross_inc}"
+        )
         builtin_cmake_args = " ".join(
             f"-DBUILTINS_{triple}_CMAKE_SYSTEM_NAME={system}"
+            f" -DBUILTINS_{triple}_COMPILER_RT_BAREMETAL_BUILD=ON"
+            f' -DBUILTINS_{triple}_CMAKE_C_FLAGS="{cross_flags}"'
+            f' -DBUILTINS_{triple}_CMAKE_CXX_FLAGS="{cross_flags}"'
             for triple, system in CROSS_BUILTIN_TARGETS
         )
 
