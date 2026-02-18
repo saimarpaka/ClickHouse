@@ -54,8 +54,9 @@ bool ParserDescribeTableQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & ex
 
     query->children.push_back(query->table_expression);
 
-    if (query->settings_ast)
-        query->children.push_back(query->settings_ast);
+    /// Note: settings_ast is NOT added to children here.
+    /// ParserQueryWithOutput will add format_ast and settings_ast to children
+    /// in canonical order to ensure consistent tree hashing after formatting roundtrips.
 
     node = query;
 

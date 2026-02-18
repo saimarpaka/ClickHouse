@@ -237,6 +237,10 @@ SELECT * FROM test_fmt_replacing FINAL;
 
 -- DESCRIBE
 DESCRIBE TABLE test_fmt_mt;
+DESCRIBE TABLE test_fmt_mt FORMAT Null;
+DESCRIBE TABLE test_fmt_mt SETTINGS max_threads = 1;
+DESCRIBE TABLE test_fmt_mt SETTINGS max_threads = 1 FORMAT Null;
+DESCRIBE TABLE test_fmt_mt FORMAT Null SETTINGS max_threads = 1;
 
 -- SHOW
 SHOW CREATE TABLE test_fmt_mt;

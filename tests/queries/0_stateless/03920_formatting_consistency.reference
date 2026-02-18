@@ -248,5 +248,7 @@ ell
 9
 x	UInt8					
 z	UInt8	DEFAULT	0			
+x	UInt8					
+z	UInt8	DEFAULT	0			
 CREATE TABLE default.test_fmt_mt\n(\n    `x` UInt8,\n    `z` UInt8 DEFAULT 0\n)\nENGINE = MergeTree\nORDER BY x\nSETTINGS index_granularity = 8192
 1
