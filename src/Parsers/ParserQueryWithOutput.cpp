@@ -104,59 +104,10 @@ bool ParserQueryWithOutput::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     /// FIXME: try to prettify this cast using `as<>()`
     auto & query_with_output = dynamic_cast<ASTQueryWithOutput &>(*query);
 
-    ParserKeyword s_into_outfile(Keyword::INTO_OUTFILE);
-    if (s_into_outfile.ignore(pos, expected))
-    {
-        ParserStringLiteral out_file_p;
-        if (!out_file_p.parse(pos, query_with_output.out_file, expected))
-            return false;
-
-        ParserKeyword s_append(Keyword::APPEND);
-        if (s_append.ignore(pos, expected))
-        {
-            query_with_output.setIsOutfileAppend(true);
-        }
-
-        ParserKeyword s_truncate(Keyword::TRUNCATE);
-        if (s_truncate.ignore(pos, expected))
-        {
-            query_with_output.setIsOutfileTruncate(true);
-        }
-
-        ParserKeyword s_stdout(Keyword::AND_STDOUT);
-        if (s_stdout.ignore(pos, expected))
-        {
-            query_with_output.setIsIntoOutfileWithStdout(true);
-        }
-
-        ParserKeyword s_compression_method(Keyword::COMPRESSION);
-        if (s_compression_method.ignore(pos, expected))
-        {
-            ParserStringLiteral compression;
-            if (!compression.parse(pos, query_with_output.compression, expected))
-                return false;
-            query_with_output.children.push_back(query_with_output.compression);
-
-            ParserKeyword s_compression_level(Keyword::LEVEL);
-            if (s_compression_level.ignore(pos, expected))
-            {
-                ParserNumber compression_level;
-                if (!compression_level.parse(pos, query_with_output.compression_level, expected))
-                    return false;
-                query_with_output.children.push_back(query_with_output.compression_level);
-            }
-        }
-
-        query_with_output.children.push_back(query_with_output.out_file);
-
-    }
-
-    /// These two sections are allowed in an arbitrary order.
-    ParserKeyword s_format(Keyword::FORMAT);
-    ParserKeyword s_settings(Keyword::SETTINGS);
-
-    /** Why: let's take the following example:
-      * SELECT 1 UNION ALL SELECT 2 FORMAT TSV
+    /** These three sections (INTO OUTFILE, FORMAT, SETTINGS) are allowed in an arbitrary order.
+      *
+      * Why: let's take the following example:
+      *   SELECT 1 UNION ALL SELECT 2 FORMAT TSV
       * Each subquery can be put in parentheses and have its own settings:
       *   (SELECT 1 SETTINGS a=b) UNION ALL (SELECT 2 SETTINGS c=d) FORMAT TSV
       * And the whole query can have settings:
@@ -176,43 +127,86 @@ bool ParserQueryWithOutput::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
       *   ^^^^^^^^^^^^^^^^^^^^^
       * Because this part is consumed into ASTSelectWithUnionQuery
       * and the rest into ASTQueryWithOutput.
+      *
+      * INTO OUTFILE must also participate in this loop, because in nested cases
+      * (e.g. EXPLAIN wrapping a SELECT), if SETTINGS appears before INTO OUTFILE,
+      * the fixed-order parsing would fail to consume INTO OUTFILE at the correct
+      * AST level, leading to inconsistent AST formatting roundtrips.
       */
 
-    for (size_t i = 0; i < 2; ++i)
+    ParserKeyword s_into_outfile(Keyword::INTO_OUTFILE);
+    ParserKeyword s_format(Keyword::FORMAT);
+    ParserKeyword s_settings(Keyword::SETTINGS);
+
+    for (size_t i = 0; i < 3; ++i)
     {
-        if (!query_with_output.format_ast && s_format.ignore(pos, expected))
+        if (!query_with_output.out_file && s_into_outfile.ignore(pos, expected))
+        {
+            ParserStringLiteral out_file_p;
+            if (!out_file_p.parse(pos, query_with_output.out_file, expected))
+                return false;
+
+            ParserKeyword s_append(Keyword::APPEND);
+            if (s_append.ignore(pos, expected))
+                query_with_output.setIsOutfileAppend(true);
+
+            ParserKeyword s_truncate(Keyword::TRUNCATE);
+            if (s_truncate.ignore(pos, expected))
+                query_with_output.setIsOutfileTruncate(true);
+
+            ParserKeyword s_stdout(Keyword::AND_STDOUT);
+            if (s_stdout.ignore(pos, expected))
+                query_with_output.setIsIntoOutfileWithStdout(true);
+
+            ParserKeyword s_compression_method(Keyword::COMPRESSION);
+            if (s_compression_method.ignore(pos, expected))
+            {
+                ParserStringLiteral compression;
+                if (!compression.parse(pos, query_with_output.compression, expected))
+                    return false;
+
+                ParserKeyword s_compression_level(Keyword::LEVEL);
+                if (s_compression_level.ignore(pos, expected))
+                {
+                    ParserNumber compression_level;
+                    if (!compression_level.parse(pos, query_with_output.compression_level, expected))
+                        return false;
+                }
+            }
+        }
+        else if (!query_with_output.format_ast && s_format.ignore(pos, expected))
         {
             ParserIdentifier format_p;
 
             if (!format_p.parse(pos, query_with_output.format_ast, expected))
                 return false;
             setIdentifierSpecial(query_with_output.format_ast);
-
-            query_with_output.children.push_back(query_with_output.format_ast);
         }
         else if (!query_with_output.settings_ast && s_settings.ignore(pos, expected))
         {
-            // SETTINGS key1 = value1, key2 = value2, ...
             ParserSetQuery parser_settings(true);
             if (!parser_settings.parse(pos, query_with_output.settings_ast, expected))
                 return false;
-            query_with_output.children.push_back(query_with_output.settings_ast);
         }
         else
             break;
     }
 
-    /// The formatter always outputs FORMAT before SETTINGS. Ensure children
-    /// are in the same canonical order so that tree hash is stable after
-    /// a formatting roundtrip (regardless of the original clause order).
-    if (query_with_output.format_ast && query_with_output.settings_ast)
+    /// Add output option children in canonical order (matching the formatter's
+    /// output order: INTO OUTFILE → FORMAT → SETTINGS) so that the tree hash
+    /// is stable after a formatting roundtrip regardless of the original clause order.
+    if (query_with_output.out_file)
     {
-        auto & ch = query_with_output.children;
-        auto fmt_it = std::find(ch.begin(), ch.end(), query_with_output.format_ast);
-        auto set_it = std::find(ch.begin(), ch.end(), query_with_output.settings_ast);
-        if (fmt_it != ch.end() && set_it != ch.end() && set_it < fmt_it)
-            std::iter_swap(fmt_it, set_it);
+        if (query_with_output.compression)
+            query_with_output.children.push_back(query_with_output.compression);
+        if (query_with_output.compression_level)
+            query_with_output.children.push_back(query_with_output.compression_level);
+        query_with_output.children.push_back(query_with_output.out_file);
     }
+    if (query_with_output.format_ast)
+        query_with_output.children.push_back(query_with_output.format_ast);
+    if (query_with_output.settings_ast)
+        query_with_output.children.push_back(query_with_output.settings_ast);
 
     node = std::move(query);
     return true;
