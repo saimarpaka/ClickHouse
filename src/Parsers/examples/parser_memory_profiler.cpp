@@ -254,14 +254,14 @@ try
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
 
-    if (vm.count("help"))
+    if (vm.contains("help"))
     {
         std::cerr << desc << "\n";
         return 0;
     }
 
     /// Handle batch symbolization mode: shared cache, no query needed
-    if (vm.count("symbolize-batch"))
+    if (vm.contains("symbolize-batch"))
     {
         auto batch_files = vm["symbolize-batch"].as<std::vector<std::string>>();
         if (batch_files.empty())
@@ -292,8 +292,8 @@ try
     }
 
     std::string profile_prefix;
-    bool enable_profiling = vm.count("profile");
-    bool enable_symbolize = vm.count("symbolize");
+    bool enable_profiling = vm.contains("profile");
+    bool enable_symbolize = vm.contains("symbolize");
 
     if (enable_profiling)
         profile_prefix = vm["profile"].as<std::string>();
