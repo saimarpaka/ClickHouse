@@ -115,8 +115,8 @@ void setMaxBackgroundThreads(size_t max_threads)
 namespace
 {
 
-/// Helper to parse hex address from string_view and advance it.
-/// Returns parsed address or 0 on failure, advances src past parsed digits.
+/// Parse hex address from string_view, advance src past parsed digits.
+/// Returns true on success and writes the address to @out.
 bool parseHexAddress(std::string_view & src, UInt64 & out)
 {
     /// Skip "0x" prefix if present
@@ -187,19 +187,15 @@ void collectAddressesFromHeapProfile(
     }
 }
 
-/// Symbolize a set of addresses into a map: address -> "sym1--sym2--..."
-///
-/// The expensive part: DWARF lookup with inline frame resolution (~few ms per address).
-/// For server-side symbolization (SYSTEM JEMALLOC ...), a process-wide address cache
-/// would help but requires a different approach — this batch function is the solution
-/// for the external profiler tool.
-std::unordered_map<UInt64, std::string> symbolizeAddresses(const std::unordered_set<UInt64> & addresses)
+/// Symbolize addresses that are not already in the cache.
+/// DWARF lookup with inline frame resolution is ~few ms per address.
+void symbolizeAddresses(const std::unordered_set<UInt64> & addresses, SymbolCache & cache)
 {
-    std::unordered_map<UInt64, std::string> result;
-    result.reserve(addresses.size());
-
     for (UInt64 address : addresses)
     {
+        if (cache.contains(address))
+            continue;
+
         FramePointers fp;
         fp[0] = reinterpret_cast<void *>(address);
 
@@ -223,10 +219,8 @@ std::unordered_map<UInt64, std::string> symbolizeAddresses(const std::unordered_
             combined += symbol;
             first_symbol = false;
         }
-        result[address] = std::move(combined);
+        cache[address] = std::move(combined);
     }
-
-    return result;
 }
 
 /// Write a symbolized .sym file.
@@ -236,7 +230,7 @@ std::unordered_map<UInt64, std::string> symbolizeAddresses(const std::unordered_
 void writeSymbolizedHeapProfile(
     const std::string & input_filename,
     const std::string & output_filename,
-    const std::unordered_map<UInt64, std::string> & symbol_map,
+    const SymbolCache & cache,
     const std::unordered_set<UInt64> & file_addresses)
 {
     WriteBufferFromFile out(output_filename);
@@ -251,7 +245,7 @@ void writeSymbolizedHeapProfile(
     }
 
     /// Write only symbols for addresses that appear in this file
-    for (const auto & [address, symbols] : symbol_map)
+    for (const auto & [address, symbols] : cache)
     {
         if (!file_addresses.contains(address))
             continue;
@@ -339,42 +333,17 @@ void setLastFlushProfile(const char * filename)
 
 void symbolizeHeapProfile(const std::string & input_filename, const std::string & output_filename)
 {
-    std::unordered_set<UInt64> addresses;
-    collectAddressesFromHeapProfile(input_filename, addresses);
-    auto symbol_map = symbolizeAddresses(addresses);
-    writeSymbolizedHeapProfile(input_filename, output_filename, symbol_map, addresses);
+    SymbolCache cache;
+    symbolizeHeapProfile(input_filename, output_filename, cache);
 }
 
 
-void symbolizeHeapProfilesBatch(const std::vector<std::pair<std::string, std::string>> & input_output_pairs)
+void symbolizeHeapProfile(const std::string & input_filename, const std::string & output_filename, SymbolCache & cache)
 {
-    if (input_output_pairs.empty())
-        return;
-
-    /// Phase 1: Collect addresses from each file and build the global set.
-    /// We keep per-file address sets (small — just UInt64 values) to filter
-    /// the shared symbol map when writing, so each output file only contains
-    /// symbols for its own addresses.
-    std::unordered_set<UInt64> all_addresses;
-    std::vector<std::unordered_set<UInt64>> per_file_addresses(input_output_pairs.size());
-
-    for (size_t i = 0; i < input_output_pairs.size(); ++i)
-    {
-        collectAddressesFromHeapProfile(input_output_pairs[i].first, per_file_addresses[i]);
-        all_addresses.insert(per_file_addresses[i].begin(), per_file_addresses[i].end());
-    }
-
-    /// Phase 2: Symbolize all unique addresses once (single DWARF pass).
-    auto symbol_map = symbolizeAddresses(all_addresses);
-
-    /// Phase 3: Write each output file.
-    /// Re-reads input files to copy heap data (no file content held in RAM).
-    for (size_t i = 0; i < input_output_pairs.size(); ++i)
-    {
-        writeSymbolizedHeapProfile(
-            input_output_pairs[i].first, input_output_pairs[i].second,
-            symbol_map, per_file_addresses[i]);
-    }
+    std::unordered_set<UInt64> addresses;
+    collectAddressesFromHeapProfile(input_filename, addresses);
+    symbolizeAddresses(addresses, cache);
+    writeSymbolizedHeapProfile(input_filename, output_filename, cache, addresses);
 }
 
 

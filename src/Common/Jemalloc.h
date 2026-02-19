@@ -5,9 +5,9 @@
 #if USE_JEMALLOC
 
 #include <string>
-#include <utility>
-#include <vector>
+#include <unordered_map>
 #include <Common/logger_useful.h>
+#include <base/types.h>
 #include <jemalloc/jemalloc.h>
 
 namespace DB
@@ -93,21 +93,22 @@ void setCollectLocalProfileSamplesInTraceLog(bool value);
 
 std::string_view getLastFlushProfileForThread();
 
-/// Convert a jemalloc heap profile to symbolized format that jeprof can read without binary
-/// This generates a "jeprof --raw" compatible format with embedded symbols
+/// Cache mapping address -> symbolized name (e.g. "func1--inline2--inline3").
+/// Pass the same cache to multiple symbolizeHeapProfile() calls to avoid
+/// redundant DWARF lookups for addresses shared across heap files.
+using SymbolCache = std::unordered_map<UInt64, std::string>;
+
+/// Convert a jemalloc heap profile to symbolized format that jeprof can read without binary.
+/// This generates a "jeprof --raw" compatible format with embedded symbols.
 ///
 /// Notes:
 /// - demangling code slightly differs (i.e. it may return "operator()" instead of "DB::Context::initializeSystemLogs()::$_0::operator()() const")
 void symbolizeHeapProfile(const std::string & input_filename, const std::string & output_filename);
 
-/// Batch-symbolize multiple heap profiles at once.
-/// Collects all unique addresses from all input files, symbolizes them once,
-/// then writes all output files using the shared symbol table.
-/// This is much faster than calling symbolizeHeapProfile() for each file
-/// individually when files share many common addresses (same binary).
-///
-/// Each pair is (input_heap_file, output_sym_file).
-void symbolizeHeapProfilesBatch(const std::vector<std::pair<std::string, std::string>> & input_output_pairs);
+/// Overload with a shared symbol cache.
+/// Addresses already in the cache are not re-symbolized (skips DWARF lookup).
+/// The cache is populated with any new addresses found in the file.
+void symbolizeHeapProfile(const std::string & input_filename, const std::string & output_filename, SymbolCache & cache);
 
 }
 

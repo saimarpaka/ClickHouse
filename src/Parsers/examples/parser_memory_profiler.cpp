@@ -78,6 +78,8 @@
 #include <unistd.h>
 #include <atomic>
 
+#include <boost/program_options.hpp>
+
 #include <Common/Exception.h>
 #include <Common/Jemalloc.h>
 #include <Parsers/ParserQuery.h>
@@ -197,27 +199,7 @@ std::string readQuery()
     );
 }
 
-void printUsage(const char * prog_name)
-{
-    std::cerr << "Usage: " << prog_name << " [--profile <prefix>] [--symbolize]\n";
-    std::cerr << "       " << prog_name << " --symbolize-batch <file1.heap> [file2.heap ...]\n";
-    std::cerr << "  Reads SQL query from stdin until EOF and prints memory stats.\n";
-    std::cerr << "\nOptions:\n";
-    std::cerr << "  --profile <prefix>       Dump jemalloc heap profiles to <prefix>*.heap\n";
-    std::cerr << "  --symbolize              Symbolize heap profiles (requires --profile)\n";
-    std::cerr << "  --symbolize-batch <files> Batch-symbolize multiple .heap files at once.\n";
-    std::cerr << "                           Collects all addresses, symbolizes once, writes .heap.sym files.\n";
-    std::cerr << "                           Much faster than individual --symbolize for many files.\n";
-    std::cerr << "\nOutput format (tab-separated, query mode):\n";
-    std::cerr << "  query_length  allocated_before  allocated_after  allocated_diff\n";
-    std::cerr << "\nExamples:\n";
-    std::cerr << "  # Memory stats only:\n";
-    std::cerr << "  echo 'SELECT 1;' | " << prog_name << "\n";
-    std::cerr << "\n  # With heap profiling and symbolization (Linux):\n";
-    std::cerr << "  MALLOC_CONF=prof:true,lg_prof_sample:0 " << prog_name << " --profile /tmp/p_ --symbolize <<< 'SELECT 1;'\n";
-    std::cerr << "\n  # Batch symbolize heap files (fast — single DWARF pass):\n";
-    std::cerr << "  " << prog_name << " --symbolize-batch /tmp/q1_before.*.heap /tmp/q1_after.*.heap /tmp/q2_*.heap\n";
-}
+namespace po = boost::program_options;
 
 void printProfilingStatus()
 {
@@ -257,55 +239,37 @@ try
 {
     using namespace DB;
 
-    std::string profile_prefix;
-    bool enable_profiling = false;
-    bool enable_symbolize = false;
-    bool batch_symbolize = false;
-    std::vector<std::string> batch_files;
+    po::options_description desc("Measure memory allocations during SQL parsing.\n"
+                                 "Reads query from stdin, prints tab-separated: query_length before after diff\n\n"
+                                 "Options");
+    desc.add_options()
+        ("help,h", "Show help")
+        ("profile", po::value<std::string>(), "Dump jemalloc heap profiles with this prefix")
+        ("symbolize", "Symbolize heap profiles (requires --profile)")
+        ("symbolize-batch", po::value<std::vector<std::string>>()->multitoken(),
+         "Batch-symbolize .heap files (shared cache, single DWARF pass)")
+    ;
 
-    for (int i = 1; i < argc; ++i)
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);
+
+    if (vm.count("help"))
     {
-        std::string arg = argv[i];
-        if (arg == "--profile" && i + 1 < argc)
-        {
-            profile_prefix = argv[++i];
-            enable_profiling = true;
-        }
-        else if (arg == "--symbolize")
-        {
-            enable_symbolize = true;
-        }
-        else if (arg == "--symbolize-batch")
-        {
-            batch_symbolize = true;
-            /// All remaining arguments are heap files
-            for (int j = i + 1; j < argc; ++j)
-                batch_files.emplace_back(argv[j]);
-            break;
-        }
-        else if (arg == "--help" || arg == "-h")
-        {
-            printUsage(argv[0]);
-            return 0;
-        }
-        else
-        {
-            std::cerr << "Unknown option: " << arg << "\n";
-            printUsage(argv[0]);
-            return 1;
-        }
+        std::cerr << desc << "\n";
+        return 0;
     }
 
-    /// Handle batch symbolization mode: no query needed, just symbolize heap files
-    if (batch_symbolize)
+    /// Handle batch symbolization mode: shared cache, no query needed
+    if (vm.count("symbolize-batch"))
     {
+        auto batch_files = vm["symbolize-batch"].as<std::vector<std::string>>();
         if (batch_files.empty())
         {
             std::cerr << "Error: --symbolize-batch requires at least one .heap file\n";
             return 1;
         }
 
-        /// Validate all input files exist before starting the expensive symbolization
         for (const auto & file : batch_files)
         {
             if (!std::filesystem::exists(file))
@@ -315,20 +279,24 @@ try
             }
         }
 
-        std::vector<std::pair<std::string, std::string>> input_output_pairs;
-        input_output_pairs.reserve(batch_files.size());
-        for (const auto & file : batch_files)
-            input_output_pairs.emplace_back(file, file + ".sym");
-
         std::cerr << "Batch symbolizing " << batch_files.size() << " heap files...\n";
-        Jemalloc::symbolizeHeapProfilesBatch(input_output_pairs);
-
-        for (const auto & [input, output] : input_output_pairs)
-            std::cerr << "Symbolized: " << input << " -> " << output << "\n";
-
-        std::cerr << "Batch symbolization complete.\n";
+        Jemalloc::SymbolCache cache;
+        for (const auto & file : batch_files)
+        {
+            std::string output = file + ".sym";
+            Jemalloc::symbolizeHeapProfile(file, output, cache);
+            std::cerr << "Symbolized: " << file << " -> " << output << "\n";
+        }
+        std::cerr << "Done (" << cache.size() << " unique addresses cached).\n";
         return 0;
     }
+
+    std::string profile_prefix;
+    bool enable_profiling = vm.count("profile");
+    bool enable_symbolize = vm.count("symbolize");
+
+    if (enable_profiling)
+        profile_prefix = vm["profile"].as<std::string>();
 
     if (enable_symbolize && !enable_profiling)
     {
