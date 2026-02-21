@@ -1286,10 +1286,17 @@ public:
 
             if (!is_tuple && elements.size() == 1)
             {
-                // Special case for (('a', 'b')) = tuple(('a', 'b'))
+                /// Special case for (('a', 'b')) = tuple(('a', 'b'))
+                /// This is needed for IN semantics: (field, value) IN (('foo', 'bar'))
+                /// should be a 1-element set, not a flat 2-element tuple.
+                /// But skip promotion when the element has an alias, because the
+                /// extra tuple() wrapper changes how the alias is formatted and
+                /// breaks AST formatting roundtrip (e.g. ON ((1, 0.648) AS a7)
+                /// would reparse as ON tuple((1, 0.648) AS a7)).
                 if (auto * literal = elements[0]->as<ASTLiteral>())
                     if (literal->value.getType() == Field::Types::Tuple)
-                        is_tuple = true;
+                        if (elements[0]->tryGetAlias().empty())
+                            is_tuple = true;
 
                 // Special case for f(x, (y) -> z) = f(x, tuple(y) -> z)
                 if (pos->type == TokenType::Arrow)
@@ -2801,6 +2808,7 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
         return Action::NONE;
 
     /// Try to find operators from 'operators_table'
+    auto saved_pos = pos;
     auto cur_op = operators_table.begin();
     for (; cur_op != operators_table.end(); ++cur_op)
     {
@@ -2828,7 +2836,12 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
     if (op.type == OperatorType::Lambda)
     {
         if (!layers.back()->parseLambda())
+        {
+            /// Restore the position: parseOperator already advanced past '->',
+            /// but parseLambda failed, so we must not consume the token.
+            pos = saved_pos;
             return Action::NONE;
+        }
 
         layers.back()->pushOperator(op);
         return Action::OPERAND;
