@@ -63,6 +63,8 @@ const VersionToSettingsChangesMap & getSettingsChangesHistory()
             {"allow_experimental_insert_into_iceberg", false, false, "Insert into iceberg was moved to Beta"},
             {"output_format_arrow_date_as_uint16", true, false, "Write Date as Arrow DATE32 instead of plain UInt16 by default."},
             {"opentelemetry_start_keeper_trace_probability", "auto", "auto", "New setting"},
+            {"data_type_default_nullable_if_not_in_keys", false, false, "New setting to exclude key columns from data_type_default_nullable"},
+            {"schema_inference_make_columns_nullable_if_not_in_keys", false, false, "New setting to exclude key columns from schema_inference_make_columns_nullable"},
         });
         addSettingsChanges(settings_changes_history, "26.1",
         {
