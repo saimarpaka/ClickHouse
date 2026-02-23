@@ -150,15 +150,6 @@ ASTPtr ASTFunction::clone() const
 }
 
 
-void ASTFunction::clearEmptyArgs()
-{
-    if (arguments && arguments->children.empty())
-    {
-        children.erase(std::remove(children.begin(), children.end(), arguments), children.end());
-        arguments.reset();
-    }
-}
-
 
 void ASTFunction::updateTreeHashImpl(SipHash & hash_state, bool ignore_aliases) const
 {
@@ -738,10 +729,11 @@ void ASTFunction::formatImplWithoutAlias(WriteBuffer & ostr, const FormatSetting
         ostr << ')';
     }
 
-    if (arguments)
-    {
+    if ((arguments && !arguments->children.empty()) || !noEmptyArgs())
         ostr << '(';
 
+    if (arguments)
+    {
         FunctionSecretArgumentsFinder::Result secret_arguments;
         if (!settings.show_secrets)
             secret_arguments = FunctionSecretArgumentsFinderAST(*this).getResult();
@@ -812,8 +804,10 @@ void ASTFunction::formatImplWithoutAlias(WriteBuffer & ostr, const FormatSetting
             argument->format(ostr, settings, state, nested_dont_need_parens);
         }
 
-        ostr << ')';
     }
+
+    if ((arguments && !arguments->children.empty()) || !noEmptyArgs())
+        ostr << ')';
 
     finishFormatWithWindow(ostr, settings, state, frame);
 }
