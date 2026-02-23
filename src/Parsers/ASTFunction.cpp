@@ -150,7 +150,6 @@ ASTPtr ASTFunction::clone() const
 }
 
 
-
 void ASTFunction::updateTreeHashImpl(SipHash & hash_state, bool ignore_aliases) const
 {
     hash_state.update(name.size());
